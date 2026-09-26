@@ -30,15 +30,15 @@ load(fullfile(results_dir, 'generated_hull_panels.mat'));
 
 %% Compute the MSS maneuvering model and vessel periods
 omega_p = 0.8;
-vessel = computeManeuveringModel(vessel,omega_p,0);
+vessel = computeManeuveringModel(vessel,omega_p, ...
+    [0.05 0.05 0.05],[0, 0.1, 0],0);
 
 % vesselPeriods expects frequency-indexed A/B and one 6-by-6 C matrix.
 Aw = vessel.A(:,:,:,1);
-Bw = vessel.B(:,:,:,1) + vessel.Bv(:,:,:,1);
-C = vessel.C(:,:,1,1);
+Bw = vessel.B(:,:,:,1) + vessel.powerBased.Bv;
 
 [T,zeta,omega,omega_n] = vesselPeriods( ...
-    vessel.freqs, vessel.MRB, Aw, Bw, C, 'coupled', true);
+    vessel.freqs, vessel.MRB, Aw, Bw, vessel.powerBased.G, 'coupled', true);
 
 %% Plot the generated hull-panel mesh
 figure(gcf)

@@ -1,7 +1,7 @@
 {
   "offset_points_csv": "offset_points.csv",
-  "samples_per_section": 20,
-  "number_of_stations": 50,
+  "samples_per_section": 24,
+  "number_of_stations": 60,
   "body_name": "CapytaineTestShip",
   "write_mss_vessel": true,
   "rotation_center_m": [0.0, 0.0, -1.0],

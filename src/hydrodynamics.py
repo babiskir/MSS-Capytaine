@@ -11,6 +11,7 @@ import numpy as np
 
 DOFS = ("Surge", "Sway", "Heave", "Roll", "Pitch", "Yaw")
 LOG = logging.getLogger(__name__)
+RECIPROCITY_WARNING_THRESHOLD = 0.01
 
 
 def _vector3(value: object, name: str) -> tuple[float, float, float]:
@@ -63,6 +64,45 @@ def _mass_matrix(
             "The first three mass-matrix diagonal entries must equal mass_kg"
         )
     return matrix
+
+
+def _symmetrize_hydrodynamic_matrix(
+    matrix: np.ndarray,
+    name: str,
+    omega: np.ndarray,
+) -> np.ndarray:
+    """Enforce zero-speed reciprocity and warn about excessive asymmetry."""
+    matrix = np.asarray(matrix, dtype=float)
+    omega = np.asarray(omega, dtype=float)
+    if matrix.ndim != 3 or matrix.shape[1:] != (6, 6):
+        raise ValueError(f"{name} must have shape (n_omega, 6, 6)")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError(f"{name} must contain only finite values")
+    if omega.shape != (matrix.shape[0],):
+        raise ValueError(f"{name} frequencies do not match its matrix data")
+
+    transpose = matrix.transpose(0, 2, 1)
+    matrix_norm = np.linalg.norm(matrix, axis=(1, 2))
+    skew_norm = np.linalg.norm(matrix - transpose, axis=(1, 2))
+    relative_skew = np.zeros_like(matrix_norm)
+    np.divide(
+        skew_norm,
+        matrix_norm,
+        out=relative_skew,
+        where=matrix_norm > 0.0,
+    )
+
+    worst = int(np.argmax(relative_skew))
+    if relative_skew[worst] > RECIPROCITY_WARNING_THRESHOLD:
+        LOG.warning(
+            "%s violates reciprocity by %.2f%% at omega=%g rad/s before "
+            "symmetrization; check or refine the hydrodynamic mesh",
+            name,
+            100.0 * relative_skew[worst],
+            omega[worst],
+        )
+
+    return 0.5 * (matrix + transpose)
 
 
 def run(config_path: Path) -> Path:
@@ -395,6 +435,53 @@ def run(config_path: Path) -> Path:
     )
     Ainf = DOF_SIGNS[:, None] * Ainf * DOF_SIGNS[None, :]
     Binf = DOF_SIGNS[:, None] * Binf * DOF_SIGNS[None, :]
+
+    # At zero forward speed, radiation added mass and damping satisfy the
+    # reciprocity relation. Discretization errors can leave a skew component,
+    # so diagnose it and use the symmetric coefficients consistently for
+    # viscous damping, motion RAOs, and vessel export.
+    all_omega = np.concatenate(([0.0], omega, [np.inf]))
+    added_mass = output_dataset.added_mass.transpose(
+        "omega", "influenced_dof", "radiating_dof"
+    )
+    added_mass_values = _symmetrize_hydrodynamic_matrix(
+        np.concatenate(
+            (
+                A0[None, :, :],
+                np.asarray(added_mass.values, dtype=float),
+                Ainf[None, :, :],
+            ),
+            axis=0,
+        ),
+        "Added-mass matrix",
+        all_omega,
+    )
+    A0 = added_mass_values[0]
+    Ainf = added_mass_values[-1]
+    output_dataset["added_mass"] = added_mass.copy(
+        data=added_mass_values[1:-1]
+    )
+
+    radiation_damping = output_dataset.radiation_damping.transpose(
+        "omega", "influenced_dof", "radiating_dof"
+    )
+    damping_values = _symmetrize_hydrodynamic_matrix(
+        np.concatenate(
+            (
+                B0[None, :, :],
+                np.asarray(radiation_damping.values, dtype=float),
+                Binf[None, :, :],
+            ),
+            axis=0,
+        ),
+        "Radiation-damping matrix",
+        all_omega,
+    )
+    B0 = damping_values[0]
+    Binf = damping_values[-1]
+    output_dataset["radiation_damping"] = radiation_damping.copy(
+        data=damping_values[1:-1]
+    )
 
     # Bv is diagonal at the CG and has the same entries in both coordinate
     # frames. Compute it from the FSD coefficients that will be exported.

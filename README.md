@@ -148,7 +148,7 @@ section runs from keel to waterline (`z = 0`).
 headings. Set `rotation_center_m` equal to `center_of_mass_m` for the CG-referenced export. The limiting-frequency calculations require infinite
 water depth, which is the default when `water_depth_m` is absent or `null`.
 
-`samples_per_section` controls resolution around each half section, while `number_of_stations` controls resolution along the hull. Check Capytaine's mesh-resolution warnings at the highest wave frequencies.
+`samples_per_section` controls resolution around each half section, while `number_of_stations` controls resolution along the hull. Check Capytaine's mesh-resolution warnings at the highest wave frequencies. The workflow symmetrizes the added-mass and radiation-damping matrices as required by zero-speed reciprocity. It reports a warning when the relative reciprocity error exceeds 1%, since that can indicate a mesh that needs checking or refinement.
 
 ## Viscous damping correction
 
