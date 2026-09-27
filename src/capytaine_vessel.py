@@ -166,7 +166,8 @@ def write_vessel(
     zero_radiation_damping: np.ndarray,
     infinite_added_mass: np.ndarray,
     infinite_radiation_damping: np.ndarray,
-    viscous_damping_matrix: np.ndarray,
+    kappa_126: np.ndarray,
+    delta_zeta_345: np.ndarray,
 ) -> None:
     """Write zero-speed Capytaine results as an MSS vessel structure.
 
@@ -177,7 +178,7 @@ def write_vessel(
         vessel.freqs = [0, finite Capytaine frequencies, 10]
 
     The data stored at 10 rad/s are Capytaine's omega=infinity radiation
-    solution. This endpoint is included in A, B, Bv, and C, but not in RAOs.
+    solution. This endpoint is included in A, B, and C, but not in RAOs.
 
     RAOs contain only the positive finite frequencies.
 
@@ -185,8 +186,9 @@ def write_vessel(
     for a port-starboard symmetric monohull. These are mirrored to the full
     0 to 350 deg directional set in the MATLAB vessel structure.
 
-    Bv is a configured constant diagonal matrix, repeated at every
-    coefficient frequency. Second-order drift forces are not included.
+    The damping parameters are stored under vessel.powerBased. MATLAB's
+    computeManeuveringModel uses them to form the single constant Bv matrix.
+    Second-order drift forces are not included.
     """
 
     # ------------------------------------------------------------------
@@ -441,26 +443,18 @@ def write_vessel(
         axis=2,
     )
 
-    # ------------------------------------------------------------------
-    # Viscous damping
-    #
-    # The same CG-referenced diagonal matrix applies at all frequencies.
-    # ------------------------------------------------------------------
-
-    viscous_damping_matrix = np.asarray(viscous_damping_matrix, dtype=float)
-    if (
-        viscous_damping_matrix.shape != (6, 6)
-        or not np.all(np.isfinite(viscous_damping_matrix))
-        or not np.allclose(
-            viscous_damping_matrix,
-            np.diag(np.diag(viscous_damping_matrix)),
-        )
-        or np.any(np.diag(viscous_damping_matrix) < 0)
+    kappa_126 = np.asarray(kappa_126, dtype=float)
+    delta_zeta_345 = np.asarray(delta_zeta_345, dtype=float)
+    for values, name in (
+        (kappa_126, "kappa_126"),
+        (delta_zeta_345, "delta_zeta_345"),
     ):
-        raise ValueError("Bv must be a finite, nonnegative diagonal 6x6 matrix")
-    viscous_damping = np.repeat(
-        viscous_damping_matrix[:, :, None], len(frequencies), axis=2
-    )
+        if (
+            values.shape != (3,)
+            or not np.all(np.isfinite(values))
+            or np.any(values < 0)
+        ):
+            raise ValueError(f"{name} must contain three nonnegative numbers")
 
     # ------------------------------------------------------------------
     # Force RAOs
@@ -531,10 +525,9 @@ def write_vessel(
 
         "A": added_mass,
         "B": damping,
-        "Bv": viscous_damping,
         "C": restoring,
 
-        # A, B, Bv and C use this frequency vector.
+        # A, B and C use this frequency vector.
         "freqs": frequencies,
 
         # Full 360-degree directional set.
@@ -553,10 +546,13 @@ def write_vessel(
         ),
 
         "viscous_damping_model": (
-            "constant diagonal Bv added to radiation damping"
-            if np.any(np.diag(viscous_damping_matrix) > 0)
-            else "none; Bv is zero"
+            "power-based constant diagonal Bv computed in MATLAB"
         ),
+
+        "powerBased": {
+            "kappa_126": kappa_126,
+            "delta_zeta_345": delta_zeta_345,
+        },
 
         "second_order_drift": (
             "not computed"

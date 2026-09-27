@@ -14,6 +14,37 @@ LOG = logging.getLogger(__name__)
 RECIPROCITY_WARNING_THRESHOLD = 0.01
 
 
+def _viscous_damping_parameters(settings: object) -> tuple[np.ndarray, np.ndarray]:
+    """Validate damping inputs stored for the MATLAB power-based model."""
+    if not isinstance(settings, dict):
+        raise ValueError("viscous_damping must be an object")
+
+    expected = {"kappa_126", "delta_zeta_345"}
+    unknown = set(settings) - expected
+    missing = expected - set(settings)
+    if unknown:
+        raise ValueError(
+            "Unknown viscous_damping entries: " + ", ".join(sorted(unknown))
+        )
+    if missing:
+        raise ValueError(
+            "Missing viscous_damping entries: " + ", ".join(sorted(missing))
+        )
+
+    parameters = []
+    for name in ("kappa_126", "delta_zeta_345"):
+        values = np.asarray(settings[name], dtype=float)
+        if values.shape != (3,) or not np.all(np.isfinite(values)):
+            raise ValueError(
+                f"viscous_damping.{name} must contain three finite numbers"
+            )
+        if np.any(values < 0):
+            raise ValueError(f"viscous_damping.{name} must be nonnegative")
+        parameters.append(values)
+
+    return parameters[0], parameters[1]
+
+
 def _vector3(value: object, name: str) -> tuple[float, float, float]:
     array = np.asarray(value, dtype=float)
     if array.shape != (3,) or not np.all(np.isfinite(array)):
@@ -114,11 +145,17 @@ def run(config_path: Path) -> Path:
     config_path = config_path.resolve()
     with config_path.open(encoding="utf-8") as stream:
         config = json.load(stream)
+    submerged = config.get("submerged")
+    if not isinstance(submerged, bool):
+        raise ValueError("submerged must be true or false")
     if "total_damping" in config:
         raise ValueError(
             "Rename total_damping to viscous_damping and review the values: "
             "the new settings specify additional damping, not total targets"
         )
+    kappa_126, delta_zeta_345 = _viscous_damping_parameters(
+        config.get("viscous_damping")
+    )
     base = config_path.parent
 
     # ------------------------------------------------------------------
@@ -274,11 +311,9 @@ def run(config_path: Path) -> Path:
         faces=faces,
         name="hull_from_offsets",
     )
-    lid = (
-        mesh.generate_lid()
-        if config.get("generate_lid", True)
-        else None
-    )
+    # Surface vessels get an internal free-surface lid to suppress irregular
+    # frequencies. A submerged vehicle has no waterplane to lid.
+    lid = None if submerged else mesh.generate_lid()
 
     mass = _positive(config["mass_kg"], "mass_kg")
     mass_matrix = _mass_matrix(config, base, mass)
@@ -439,7 +474,7 @@ def run(config_path: Path) -> Path:
     # At zero forward speed, radiation added mass and damping satisfy the
     # reciprocity relation. Discretization errors can leave a skew component,
     # so diagnose it and use the symmetric coefficients consistently for
-    # viscous damping, motion RAOs, and vessel export.
+    # motion RAOs and vessel export.
     all_omega = np.concatenate(([0.0], omega, [np.inf]))
     added_mass = output_dataset.added_mass.transpose(
         "omega", "influenced_dof", "radiating_dof"
@@ -483,32 +518,10 @@ def run(config_path: Path) -> Path:
         data=damping_values[1:-1]
     )
 
-    # Bv is diagonal at the CG and has the same entries in both coordinate
-    # frames. Compute it from the FSD coefficients that will be exported.
-    from .viscous_damping import diagonal_viscous_damping
-
-    viscous_damping = diagonal_viscous_damping(
-        config.get("viscous_damping"),
-        omega,
-        np.asarray(output_dataset.inertia_matrix.values, dtype=float),
-        A0,
-        np.asarray(output_dataset.added_mass.transpose(
-            "omega", "influenced_dof", "radiating_dof"
-        ).values, dtype=float),
-        np.asarray(output_dataset.hydrostatic_stiffness.values, dtype=float),
-    )
-
-    # Viscous damping changes the motion response, not the excitation force.
-    # RAOs are still evaluated only at positive finite frequencies.
-    dissipation = xr.DataArray(
-        viscous_damping,
-        dims=("influenced_dof", "radiating_dof"),
-        coords={
-            "influenced_dof": output_dataset.influenced_dof,
-            "radiating_dof": output_dataset.radiating_dof,
-        },
-    )
-    output_dataset["motion_rao"] = rao(output_dataset, dissipation=dissipation)
+    # RAOs use potential-flow radiation damping only. The one viscous-damping
+    # matrix is formed later by computeManeuveringModel from the parameters
+    # exported under vessel.powerBased.
+    output_dataset["motion_rao"] = rao(output_dataset)
 
     hydrostatics = {
         "volume_m3": float(immersed.volume),
@@ -561,7 +574,8 @@ def run(config_path: Path) -> Path:
         zero_radiation_damping=B0,
         infinite_added_mass=Ainf,
         infinite_radiation_damping=Binf,
-        viscous_damping_matrix=viscous_damping,
+        kappa_126=kappa_126,
+        delta_zeta_345=delta_zeta_345,
     )
 
     return output_dir

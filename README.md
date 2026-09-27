@@ -54,13 +54,13 @@ The exported `vessel` structure contains:
 | `MRB` | Rigid-body mass matrix |
 | `A` | Zero-, finite-, and infinite-frequency added mass |
 | `B` | Potential-flow radiation damping |
-| `Bv` | User-configured additive viscous damping |
 | `C` | Hydrostatic restoring matrix |
 | `forceRAO` | First-order wave-excitation force RAOs |
-| `motionRAO` | First-order motion RAOs computed using `B + Bv` |
+| `motionRAO` | First-order motion RAOs computed with potential damping `B` |
 | `freqs` | Coefficient frequency grid |
 | `headings` | Full directional grid |
 | `velocities` | Vessel-speed grid, currently `[0]` |
+| `powerBased` | Inputs used by MATLAB to compute the constant power-based `Bv` |
 
 A pre-generated copy of the example vessel is included in MSS under
 [`HYDRO/vessels_capytaine/capytaineTestShip`](https://github.com/cybergalactic/MSS/tree/master/HYDRO/vessels_capytaine/capytaineTestShip).
@@ -148,38 +148,45 @@ section runs from keel to waterline (`z = 0`).
 headings. Set `rotation_center_m` equal to `center_of_mass_m` for the CG-referenced export. The limiting-frequency calculations require infinite
 water depth, which is the default when `water_depth_m` is absent or `null`.
 
+Set `submerged` to `false` for a surface vessel. The solver then generates an
+internal waterplane lid to suppress irregular-frequency artifacts. Set it to
+`true` for a submerged vehicle such as an AUV; no lid is generated.
+
 `samples_per_section` controls resolution around each half section, while `number_of_stations` controls resolution along the hull. Check Capytaine's mesh-resolution warnings at the highest wave frequencies. The workflow symmetrizes the added-mass and radiation-damping matrices as required by zero-speed reciprocity. It reports a warning when the relative reciprocity error exceeds 1%, since that can indicate a mesh that needs checking or refinement.
 
 ## Viscous damping correction
 
-The `viscous_damping` object specifies damping added to the potential-flow radiation damping `B(ω)`. Its six nonnegative entries are viscous time constants in seconds for surge, sway, and yaw, and additional dimensionless damping ratios for heave, roll, and pitch. Surge, sway, and yaw have no hydrostatic restoring; their time constants specify the intended diagonal viscous damping, including yaw. A zero in any entry disables added damping for that DOF. The test ship retains its surge/sway/yaw time constants, uses additional damping ratios of 0.2 in roll and 0.1 in pitch, and adds no viscous
-damping in heave:
+The `viscous_damping` object contains the six dimensionless inputs used by
+MSS `computeManeuveringModel`. They are stored unchanged in
+`vessel.powerBased`; Python does not construct a second viscous-damping
+matrix. `kappa_126` gives relative damping increments for surge, sway, and
+yaw. `delta_zeta_345` gives additional damping ratios for heave, roll, and
+pitch:
 
 ```json
 "viscous_damping": {
-  "surge_viscous_time_constant_s": 10,
-  "sway_viscous_time_constant_s": 50,
-  "heave_additional_damping_ratio": 0,
-  "roll_additional_damping_ratio": 0.2,
-  "pitch_additional_damping_ratio": 0.1,
-  "yaw_viscous_time_constant_s": 20
+  "kappa_126": [0.05, 0.05, 0.05],
+  "delta_zeta_345": [0, 0.1, 0]
 }
 ```
 
-The exported `Bv` is diagonal at the center of gravity and constant across all coefficient frequencies. For a nonzero time constant `Ti` in surge,
-sway, or yaw, `Bvii = (MRBii + Aii(0)) / Ti`. For heave, roll, and pitch, `Bvii = 2 ζv,i ωn,i (MRBii + Aii(ωn,i))`, where `ζv,i` is the
-**additional** ratio and `ωn,i` is the estimated undamped natural frequency from `MRB + A(ω)` and `C`. Nothing is subtracted from `B(ω)`.
-A smaller nonzero time constant means more viscous damping. If a required natural frequency lies beyond the finite calculation grid, extend
-`omega_rad_s` rather than extrapolating.
+The stored values document the selected damping assumptions and match the
+defaults in `computeManeuveringModel`. After loading the exported vessel, call
+`computeManeuveringModel(vessel, omega_p)`. It computes `A_eq`, `B_eq`, the
+single constant diagonal `powerBased.Bv`, and `D = B_eq + Bv`. For DOFs 1, 2,
+and 6, `Bvii = kappa_i B_eq,ii`. For DOFs 3, 4, and 5,
+`Bvii = 2 delta_zeta_i sqrt(Mii Gii)`.
 
-The motion RAOs include `B(ω) + Bv`; force RAOs are unchanged. The total damping remains frequency-dependent because `B(ω)` varies. Set all six
-entries to zero, or `viscous_damping` to `null`, to export zero `Bv`. The old `total_damping` settings are rejected: their values must be
-reconsidered before using the additive model.
+Capytaine motion RAOs use potential-flow damping only. No top-level
+frequency-dependent `vessel.Bv` is exported.
 
 ## Outputs
 
-`capytaineTestShip/results/capytaineTestShip.mat` contains `MRB`, `A`, `B`, `Bv`, `C`, force and motion RAOs, frequencies, and headings in MSS
-forward-starboard-down axes at the center of gravity. The hydrostatic restoring matrix `C` has entries only in the heave, roll, and pitch block.
+`capytaineTestShip/results/capytaineTestShip.mat` contains `MRB`, `A`, `B`,
+`C`, the power-based damping inputs, force and motion RAOs, frequencies, and
+headings in MSS forward-starboard-down axes at the center of gravity. The
+hydrostatic restoring matrix `C` has entries only in the heave, roll, and
+pitch block.
 
 The coefficient frequency grid includes zero frequency and the infinite-frequency radiation solution, labeled `10 rad/s`. The force andmotion RAOs use only the positive finite frequencies below `10 rad/s`.
 Headings solved from 0° to 180° are mirrored to a full 0° to 350° set.
