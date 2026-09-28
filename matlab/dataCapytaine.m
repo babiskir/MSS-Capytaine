@@ -15,14 +15,14 @@
 %
 % Generated input files:
 %   load(capytaineTestShip)       - Load MSS 'vessel' structure
-%   load(generated_hull_panels)   - load hull vertices and panel connectivity
+%   load(generated_hull_panels)   - Load hull vertices and panel connectivity
 %
 % MSS dependencies:
-%   computeManeuveringModel.m     - computes the zero-speed maneuvering model
-%   vesselPeriods.m               - computes natural periods and damping ratios
-%   plotTF.m                      - plots force response amplitude operators
-%   plotABC.m                     - plots added mass and damping matrices
-%   plotBv.m                      - plots viscous damping
+%   computeManeuveringModel.m     - Computes the power-based maneuvering model
+%   vesselPeriods.m               - Computes natural periods and damping ratios
+%   plotTF.m                      - Plots force response amplitude operators
+%   plotABC.m                     - Plots added mass and damping matrices
+%   plotBv.m                      - Plots viscous damping
 %
 % Author: Thor I. Fossen
 % Date: 2026-09-23
@@ -41,8 +41,8 @@ vessel = computeManeuveringModel(vessel, omega_p, ...
     vessel.powerBased.delta_zeta_345);  % Specified in config.json 
 
 % vesselPeriods expects frequency-indexed A and B matrices.
-Aw = vessel.A(:,:,:,1);
-Bw = vessel.B(:,:,:,1) + vessel.powerBased.Bv;
+Aw = vessel.A;
+Bw = vessel.B + vessel.powerBased.Bv;
 
 [T,zeta,omega,omega_n] = vesselPeriods( ...
     vessel.freqs, vessel.MRB, Aw, Bw, vessel.G, 'coupled', true);
