@@ -40,12 +40,9 @@ vessel = computeManeuveringModel(vessel, omega_p, ...
     vessel.powerBased.kappa_126, ...    % Specified in config.json 
     vessel.powerBased.delta_zeta_345);  % Specified in config.json 
 
-% vesselPeriods expects frequency-indexed A and B matrices.
-Aw = vessel.A;
-Bw = vessel.B + vessel.powerBased.Bv;
-
-[T,zeta,omega,omega_n] = vesselPeriods( ...
-    vessel.freqs, vessel.MRB, Aw, Bw, vessel.G, 'coupled', true);
+% Natural frequencies and damping ratios for frequency-dependent matrices
+[T,zeta,omega,omega_n] = vesselPeriods(vessel.freqs, vessel.MRB, ...
+    vessel.A, vessel.B + vessel.powerBased.Bv, vessel.G, 'coupled', true);
 
 %% Display data
 display(vessel.M,'M')
