@@ -13,6 +13,7 @@ DOFS = ("Surge", "Sway", "Heave", "Roll", "Pitch", "Yaw")
 MSS_WAVE_DIRECTIONS_DEG = np.arange(0.0, 181.0, 10.0)
 LOG = logging.getLogger(__name__)
 RECIPROCITY_WARNING_THRESHOLD = 0.01
+RECIPROCITY_GLOBAL_WARNING_THRESHOLD = 1e-3
 
 
 def _viscous_damping_parameters(settings: object) -> tuple[np.ndarray, np.ndarray]:
@@ -117,20 +118,39 @@ def _symmetrize_hydrodynamic_matrix(
     matrix_norm = np.linalg.norm(matrix, axis=(1, 2))
     skew_norm = np.linalg.norm(matrix - transpose, axis=(1, 2))
     relative_skew = np.zeros_like(matrix_norm)
+    reference_norm = float(np.max(matrix_norm))
     np.divide(
         skew_norm,
         matrix_norm,
         out=relative_skew,
-        where=matrix_norm > 0.0,
+        where=matrix_norm > np.finfo(float).eps,
     )
 
-    worst = int(np.argmax(relative_skew))
-    if relative_skew[worst] > RECIPROCITY_WARNING_THRESHOLD:
+    # A local ratio is misleading when the whole matrix is nearly zero,
+    # as is common for submerged-body damping outside its wave-radiating
+    # frequency band. Warn only when the skew is significant both locally
+    # and relative to the largest matrix norm in the solved frequency range.
+    global_skew = np.zeros_like(skew_norm)
+    if reference_norm > np.finfo(float).eps:
+        global_skew = skew_norm / reference_norm
+    warning_candidates = (
+        (relative_skew > RECIPROCITY_WARNING_THRESHOLD)
+        & (global_skew > RECIPROCITY_GLOBAL_WARNING_THRESHOLD)
+    )
+
+    if np.any(warning_candidates):
+        worst = int(
+            np.argmax(
+                np.where(warning_candidates, relative_skew, 0.0)
+            )
+        )
         LOG.warning(
-            "%s violates reciprocity by %.2f%% at omega=%g rad/s before "
+            "%s violates reciprocity by %.2f%% locally "
+            "(global skew %.3g%%) at omega=%g rad/s before "
             "symmetrization; check or refine the hydrodynamic mesh",
             name,
             100.0 * relative_skew[worst],
+            100.0 * global_skew[worst],
             omega[worst],
         )
 
@@ -138,7 +158,7 @@ def _symmetrize_hydrodynamic_matrix(
 
 
 def run(config_path: Path) -> Path:
-    """Run Capytaine and write ``capytaineTestShip.mat``."""
+    """Run Capytaine and write an MSS vessel data file."""
     import capytaine as cpt
     from capytaine.post_pro import rao
     import xarray as xr
@@ -196,7 +216,10 @@ def run(config_path: Path) -> Path:
             raise FileNotFoundError(
                 f"Hull offset points not found: {offsets_path}"
             )
-        sections = read_offset_sections(offsets_path)
+        sections = read_offset_sections(
+            offsets_path,
+            submerged=submerged,
+        )
         number_of_stations = config.get("number_of_stations")
         vertices, faces = panels_from_sections(
             sections,
@@ -214,6 +237,17 @@ def run(config_path: Path) -> Path:
             "not shipx_archive"
         )
 
+    body_name = config.get("body_name", config_path.parent.name)
+    if not isinstance(body_name, str) or not body_name.strip():
+        raise ValueError("body_name must be a nonempty string")
+    output_filename = config.get("output_filename", f"{body_name}.mat")
+    if (
+        not isinstance(output_filename, str)
+        or Path(output_filename).name != output_filename
+        or Path(output_filename).suffix.lower() != ".mat"
+    ):
+        raise ValueError("output_filename must be a .mat filename")
+
     output_dir = (base / config.get("output_dir", "results")).resolve()
     rho = _positive(
         config.get("water_density_kg_m3", 1025.0),
@@ -230,18 +264,44 @@ def run(config_path: Path) -> Path:
         else _positive(depth_value, "water depth")
     )
 
-    center_of_mass = _vector3(
+    center_of_mass_body = np.asarray(_vector3(
         config["center_of_mass_m"],
         "center_of_mass_m",
-    )
+    ))
+    if submerged:
+        submergence_depth = _positive(
+            config.get("submergence_depth_m"),
+            "submergence_depth_m",
+        )
+        geometry_translation = np.array([0.0, 0.0, -submergence_depth])
+        if np.max(vertices[:, 2] + geometry_translation[2]) >= 0.0:
+            raise ValueError(
+                "submergence_depth_m must place the complete hull below "
+                "the free surface"
+            )
+    else:
+        if "submergence_depth_m" in config:
+            raise ValueError(
+                "submergence_depth_m is only valid when submerged is true"
+            )
+        submergence_depth = 0.0
+        geometry_translation = np.zeros(3)
+
+    # The offset table and configured centers use body-fixed coordinates.
+    # A submerged case is translated only for the free-surface BEM solve.
+    # Exported MSS centers and panel geometry remain body fixed.
+    body_vertices = vertices.copy()
+    vertices = vertices + geometry_translation
+    center_of_mass = center_of_mass_body + geometry_translation
     rotation_center = center_of_mass
 
     # ------------------------------------------------------------------
     # Finite frequencies
     #
     # These frequencies are used for A(w), B(w), excitation-force RAOs,
-    # and motion RAOs. A configured 10 rad/s value is reserved for the
-    # separately computed infinite-frequency radiation result below.
+    # and motion RAOs. The value 10 rad/s is reserved for the separately
+    # computed infinite-frequency radiation result below and therefore
+    # cannot be configured as a finite frequency.
     # ------------------------------------------------------------------
 
     omega = np.asarray(config["omega_rad_s"], dtype=float)
@@ -255,19 +315,11 @@ def run(config_path: Path) -> Path:
             "omega_rad_s must be a nonempty list of positive finite "
             "angular frequencies"
         )
-    omega[np.isclose(omega, 10.0)] = 10.0
-    if np.any(omega > 10.0):
+    if np.any(omega >= 10.0):
         raise ValueError(
-            "omega_rad_s must not contain frequencies above 10 rad/s"
-        )
-
-    # The MSS hydrodynamic endpoint at 10 rad/s contains the omega=infinity
-    # radiation solution, so it must not also be solved as a finite-frequency
-    # RAO point.
-    omega = omega[omega < 10.0]
-    if len(omega) == 0:
-        raise ValueError(
-            "omega_rad_s must contain at least one frequency below 10 rad/s"
+            "omega_rad_s must contain only finite frequencies strictly "
+            "below 10 rad/s; 10 rad/s is reserved for the "
+            "infinite-frequency result"
         )
     omega = np.unique(omega)
     omega.sort()
@@ -305,7 +357,7 @@ def run(config_path: Path) -> Path:
         dofs=cpt.rigid_body_dofs(rotation_center=rotation_center),
         center_of_mass=center_of_mass,
         mass=mass,
-        name=config.get("body_name", "capytaineTestShip"),
+        name=body_name,
     )
     if tuple(body.dofs) != DOFS:
         raise ValueError(
@@ -336,9 +388,10 @@ def run(config_path: Path) -> Path:
         dtype=float,
     ).copy()
     # A freely floating body has no hydrostatic restoring force or moment
-    # in surge, sway, or yaw. Remove mesh-integration residuals in those
-    # rows and columns before computing the motion RAOs.
-    free_dofs = (0, 1, 5)
+    # in surge, sway, or yaw. A fully submerged body also has no waterplane
+    # heave stiffness. Remove mesh-integration residuals in those rows and
+    # columns before computing the motion RAOs.
+    free_dofs = (0, 1, 2, 5) if submerged else (0, 1, 5)
     hydrostatic_matrix[list(free_dofs), :] = 0.0
     hydrostatic_matrix[:, list(free_dofs)] = 0.0
     body.hydrostatic_stiffness = body.add_dofs_labels_to_matrix(
@@ -374,6 +427,13 @@ def run(config_path: Path) -> Path:
         dataset = dataset.assign_coords(period=("omega", periods))
 
     dataset.attrs["geometry_source"] = "independent offset points"
+    dataset.attrs["coordinate_origin"] = (
+        "body-fixed origin"
+        if submerged
+        else "midships, centerline, design waterline"
+    )
+    dataset.attrs["submerged"] = submerged
+    dataset.attrs["submergence_depth_m"] = submergence_depth
 
     # ------------------------------------------------------------------
     # Limiting-frequency radiation
@@ -510,14 +570,17 @@ def run(config_path: Path) -> Path:
         "body_mass_kg": mass,
         "center_of_buoyancy_m": (
             POSITION_SIGNS
-            * np.asarray(immersed.center_of_buoyancy)
+            * (
+                np.asarray(immersed.center_of_buoyancy)
+                - geometry_translation
+            )
         ).tolist(),
         "waterplane_area_m2": float(immersed.waterplane_area),
         "center_of_mass_m": (
-            POSITION_SIGNS * np.asarray(center_of_mass)
+            POSITION_SIGNS * center_of_mass_body
         ).tolist(),
         "rotation_center_m": (
-            POSITION_SIGNS * np.asarray(rotation_center)
+            POSITION_SIGNS * center_of_mass_body
         ).tolist(),
         "inertia_matrix_SI": (
             DOF_SIGNS[:, None]
@@ -530,7 +593,10 @@ def run(config_path: Path) -> Path:
             * DOF_SIGNS[None, :]
         ).tolist(),
         "coordinate_system": "MSS FSD: x forward, y starboard, z down",
+        "geometry_coordinate_origin": "body-fixed origin",
         "matrix_reference": "CG",
+        "submerged": submerged,
+        "submergence_depth_m": submergence_depth,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -545,18 +611,19 @@ def run(config_path: Path) -> Path:
     write_vessel(
         output_dataset,
         hydrostatics,
-        vertices,
+        body_vertices,
         faces,
         body.name,
         rho,
         gravity,
-        output_dir / "capytaineTestShip.mat",
+        output_dir / output_filename,
         zero_added_mass=A0,
         zero_radiation_damping=B0,
         infinite_added_mass=Ainf,
         infinite_radiation_damping=Binf,
         kappa_126=kappa_126,
         delta_zeta_345=delta_zeta_345,
+        submerged=submerged,
     )
 
     return output_dir

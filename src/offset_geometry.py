@@ -8,11 +8,17 @@ from pathlib import Path
 import numpy as np
 
 
-def read_offset_sections(path: Path) -> list[tuple[float, np.ndarray]]:
-    """Read x, z, half breadth in mesh axes: x aft, z up from waterline.
+def read_offset_sections(
+    path: Path,
+    *,
+    submerged: bool = False,
+) -> list[tuple[float, np.ndarray]]:
+    """Read x, z, half breadth in mesh axes: x aft and z up.
 
-    Rows within a station run from keel to waterline. Repeated z values are
-    allowed so a flat bottom can be represented without losing its corners.
+    Rows within a station run from bottom to top. Surface-vessel sections end
+    at the design waterline (z=0). Submerged sections are closed profiles with
+    zero half breadth at both the bottom and top. Repeated z values are allowed
+    so a flat bottom can be represented without losing its corners.
     """
     sections: dict[float, list[tuple[float, float]]] = {}
 
@@ -38,12 +44,12 @@ def read_offset_sections(path: Path) -> list[tuple[float, np.ndarray]]:
 
             if (
                 not np.all(np.isfinite((x, z, half_breadth)))
-                or z > 1e-9
                 or half_breadth < 0
+                or (not submerged and z > 1e-9)
             ):
                 raise ValueError(
-                    f"Line {line} requires finite x, z<=0, "
-                    "half breadth>=0"
+                    f"Line {line} requires finite x and z, "
+                    "half breadth>=0, and z<=0 for a surface vessel"
                 )
 
             sections.setdefault(x, []).append((half_breadth, z))
@@ -63,11 +69,19 @@ def read_offset_sections(path: Path) -> list[tuple[float, np.ndarray]]:
             or np.any(np.diff(profile[:, 1]) < -1e-9)
         ):
             raise ValueError(
-                f"Station x={x} must contain "
-                "keel-to-waterline ordered points"
+                f"Station x={x} must contain bottom-to-top ordered points"
             )
 
-        if (
+        if submerged:
+            if (
+                profile[0, 1] >= profile[-1, 1]
+                or not np.isclose(profile[-1, 0], 0.0, atol=1e-9)
+            ):
+                raise ValueError(
+                    f"Submerged station x={x} must run bottom-to-top "
+                    "and end on the centerline"
+                )
+        elif (
             profile[0, 1] >= 0
             or not np.isclose(profile[-1, 1], 0.0, atol=1e-9)
         ):

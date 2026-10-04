@@ -168,6 +168,7 @@ def write_vessel(
     infinite_radiation_damping: np.ndarray,
     kappa_126: np.ndarray,
     delta_zeta_345: np.ndarray,
+    submerged: bool = False,
 ) -> None:
     """Write zero-speed Capytaine results as an MSS vessel structure.
 
@@ -278,7 +279,9 @@ def write_vessel(
     )
 
     draft = float(
-        -np.min(vertices[:, 2])
+        np.ptp(vertices[:, 2])
+        if submerged
+        else -np.min(vertices[:, 2])
     )
 
     if min(length, breadth, draft) <= 0:
@@ -307,6 +310,10 @@ def write_vessel(
 
         "m": mass,
         "nabla": volume,
+        "submerged": bool(submerged),
+        "submergenceDepth": float(
+            hydrostatics.get("submergence_depth_m", 0.0)
+        ),
 
         "C_B": (
             volume
@@ -542,7 +549,9 @@ def write_vessel(
         "hydrodynamic_reference": "CG",
         "hydrodynamic_axes": "MSS FSD",
         "hydrodynamic_source": (
-            "Capytaine monohull offset points"
+            "Capytaine submerged offset body"
+            if submerged
+            else "Capytaine monohull offset points"
         ),
 
         "viscous_damping_model": (

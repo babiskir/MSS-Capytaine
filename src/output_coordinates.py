@@ -35,7 +35,10 @@ def to_mss_fsd(dataset: xr.Dataset) -> xr.Dataset:
     converted = converted.assign_coords(wave_direction=headings).sortby("wave_direction")
     converted.attrs.update({
         "coordinate_system": "MSS FSD: x forward, y starboard, z down",
-        "coordinate_origin": "midships, centerline, design waterline",
+        "coordinate_origin": dataset.attrs.get(
+            "coordinate_origin",
+            "midships, centerline, design waterline",
+        ),
         "matrix_reference": "CG", "force_reference": "CG",
         "motion_reference": "CG",
         "wave_direction_definition": "propagation angle from FSD +x toward +y",

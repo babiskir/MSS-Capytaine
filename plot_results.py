@@ -2,7 +2,7 @@
 
 Examples:
     python plot_results.py
-    python plot_results.py capytaineTestShip/results/capytaineTestShip.mat --heading 90
+    python plot_results.py vessels_capytaine/testShip/results/testShip.mat --heading 90
 """
 
 from __future__ import annotations
@@ -18,9 +18,10 @@ from scipy.io import loadmat
 DOFS = ("Surge", "Sway", "Heave", "Roll", "Pitch", "Yaw")
 DEFAULT_RESULT = (
     Path(__file__).resolve().parent
-    / "capytaineTestShip"
+    / "vessels_capytaine"
+    / "testShip"
     / "results"
-    / "capytaineTestShip.mat"
+    / "testShip.mat"
 )
 
 
@@ -94,7 +95,7 @@ def plot_diagonal(
         ax.grid(True, alpha=0.3)
     axes.flat[0].legend(fontsize="small")
     title = "Diagonal added mass" if field == "A" else "Diagonal potential damping"
-    fig.suptitle(f"Capytaine test ship: {title}")
+    fig.suptitle(title)
     fig.savefig(path, dpi=180)
     if not show:
         plt.close(fig)
@@ -110,14 +111,43 @@ def plot_raos(
     output_dir: Path,
     show: bool,
 ) -> list[Path]:
+    def phase_curve_with_gaps(
+        x: np.ndarray,
+        y: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Insert gaps at genuine 180-degree phase reversals."""
+        x_plot: list[float] = []
+        y_plot: list[float] = []
+        for i, (x_value, y_value) in enumerate(zip(x, y)):
+            if (
+                i > 0
+                and np.isfinite(y[i - 1])
+                and np.isfinite(y_value)
+                and abs(y_value - y[i - 1]) >= 180.0 - 1e-8
+            ):
+                x_plot.append(np.nan)
+                y_plot.append(np.nan)
+            x_plot.append(float(x_value))
+            y_plot.append(float(y_value))
+        return np.asarray(x_plot), np.asarray(y_plot)
+
     label = "Motion" if field == "motionRAO" else "Excitation force"
     stem = "motion_rao" if field == "motionRAO" else "force_rao"
     order = np.argsort(omega)
+    omega_sorted = omega[order]
+    omega_limits = (float(omega_sorted[0]), float(omega_sorted[-1]))
     outputs = []
     for part in ("magnitude", "phase"):
         fig, axes = plt.subplots(2, 3, figsize=(13, 7), constrained_layout=True)
         for index, (dof, ax) in enumerate(zip(DOFS, axes.flat)):
             magnitude = amplitude[:, heading_index, index][order]
+            zero_response = not np.any(
+                magnitude
+                > max(
+                    float(np.max(magnitude)) * 1e-8,
+                    np.finfo(float).tiny,
+                )
+            )
             if part == "magnitude":
                 plotted = magnitude
                 if field == "motionRAO":
@@ -125,17 +155,41 @@ def plot_raos(
                 else:
                     unit = "N/m" if index < 3 else "N m/m"
             else:
-                plotted = np.rad2deg(
-                    np.mod(phase[:, heading_index, index][order], 2 * np.pi)
+                phase_degrees = np.rad2deg(
+                    phase[:, heading_index, index][order]
                 )
-                cutoff = max(float(np.max(magnitude)) * 1e-8, np.finfo(float).tiny)
+                # Principal phase eliminates artificial 0/360-degree jumps.
+                plotted = (phase_degrees + 180.0) % 360.0 - 180.0
+                cutoff = max(float(np.max(magnitude)) * 1e-6, np.finfo(float).tiny)
                 plotted[magnitude <= cutoff] = np.nan
-                unit = "degrees"
-                ax.set_ylim(0, 360)
-            ax.plot(omega[order], plotted, marker="o", ms=3)
+                unit = "degrees (principal value)"
+                ax.set_ylim(-180, 180)
+                ax.set_yticks([-180, -90, 0, 90, 180])
+            if part == "phase":
+                x_plot, y_plot = phase_curve_with_gaps(omega_sorted, plotted)
+                ax.plot(x_plot, y_plot, marker="o", ms=3)
+            else:
+                ax.plot(omega_sorted, plotted, marker="o", ms=3)
+            ax.set_xlim(*omega_limits)
+            if zero_response:
+                message = (
+                    "Zero response\n(phase undefined)"
+                    if part == "phase"
+                    else "Zero response"
+                )
+                ax.text(
+                    0.5,
+                    0.5,
+                    message,
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                    color="0.35",
+                )
             ax.set(title=dof, xlabel="Angular frequency ω (rad/s)", ylabel=unit)
             ax.grid(True, alpha=0.3)
-        fig.suptitle(f"Capytaine test ship: {label} RAO {part}, {heading_deg:g}°")
+        part_label = "principal phase" if part == "phase" else part
+        fig.suptitle(f"{label} RAO {part_label}, {heading_deg:g}°")
         path = output_dir / f"{stem}_{part}_{heading_deg:g}deg.png"
         fig.savefig(path, dpi=180)
         if not show:
@@ -148,7 +202,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "result", nargs="?", type=Path, default=DEFAULT_RESULT,
-        help="MSS vessel .mat file (default: capytaineTestShip result)",
+        help="MSS vessel .mat file (default: testShip result)",
     )
     parser.add_argument(
         "--heading", type=float, default=0.0,
