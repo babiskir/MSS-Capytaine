@@ -38,7 +38,7 @@ MSS-Capytaine converts the Capytaine results to the MSS conventions before expor
 - Six degrees of freedom ordered as surge, sway, heave, roll, pitch, and yaw;
 - Forward-starboard-down (FSD) body axes;
 - Hydrodynamic matrices referenced to the center of gravity;
-- Wave headings expressed as MSS propagation directions;
+- Wave headings expressed as MSS propagation directions on the fixed 10° grid;
 - Zero vessel speed for the current Capytaine calculation; and
 - A full 0°–350° directional set obtained by mirroring the symmetric 0°–180° solution.
 
@@ -134,7 +134,7 @@ The script reads `capytaineTestShip/results/capytaineTestShip.mat` and saves six
 
 `capytaineTestShip/offset_points.csv` contains the columns `x_m,z_m,half_breadth_m`. The origin is at midships on the design waterline; `x` points aft, `z` points upward, and half breadth is nonnegative. Each section runs from keel to waterline (`z = 0`).
 
-`capytaineTestShip/config.json` specifies the mesh resolution, mass, radii of gyration (or an inertia-matrix CSV), center of mass, wave frequencies, and headings. Set `rotation_center_m` equal to `center_of_mass_m` for the CG-referenced export. The limiting-frequency calculations require infinite water depth, which is the default when `water_depth_m` is absent or `null`.
+`capytaineTestShip/config.json` specifies the mesh resolution, mass, radii of gyration (or an inertia-matrix CSV), center of mass, and wave frequencies. The center of mass is also used as the rotation center, so all hydrodynamic matrices, forces, and motions are referenced to the CG. The solver always uses the 19 wave directions from 0° to 180° in 10° increments; these are fixed by the MSS export workflow and are therefore not configuration inputs. The limiting-frequency calculations require infinite water depth, which is the default when `water_depth_m` is absent or `null`.
 
 Set `submerged` to `false` for a surface vessel. The solver then generates an internal waterplane lid to suppress irregular-frequency artifacts. Set it to `true` for a submerged vehicle such as an AUV; no lid is generated.
 
@@ -160,7 +160,7 @@ Capytaine motion RAOs use potential-flow damping only. No top-level frequency-de
 
 `capytaineTestShip/results/capytaineTestShip.mat` contains `MRB`, `A`, `B`, `C`, the power-based damping inputs, force and motion RAOs, frequencies, and headings in MSS forward-starboard-down axes at the center of gravity. The hydrostatic restoring matrix `C` has entries only in the heave, roll, and pitch block.
 
-The coefficient frequency grid includes zero frequency and the infinite-frequency radiation solution, labeled `10 rad/s`. The force and motion RAOs use only the positive finite frequencies below `10 rad/s`. Headings solved from 0° to 180° are mirrored to a full 0° to 350° set.
+The coefficient frequency grid includes zero frequency and the infinite-frequency radiation solution, labeled `10 rad/s`. The force and motion RAOs use only the positive finite frequencies below `10 rad/s`. The fixed 19 headings from 0° to 180° in 10° increments are mirrored to the full 36-heading set from 0° to 350° required by MSS.
 
 The results directory also contains `hydrostatics.json` and the generated hull panels in `.mat` and `.npz` formats. The hull and inertia values are synthetic demonstration data; numerical accuracy depends on mesh resolution.
 
