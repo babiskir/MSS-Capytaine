@@ -10,6 +10,7 @@ import numpy as np
 
 
 DOFS = ("Surge", "Sway", "Heave", "Roll", "Pitch", "Yaw")
+MSS_WAVE_DIRECTIONS_DEG = np.arange(0.0, 181.0, 10.0)
 LOG = logging.getLogger(__name__)
 RECIPROCITY_WARNING_THRESHOLD = 0.01
 
@@ -229,19 +230,11 @@ def run(config_path: Path) -> Path:
         else _positive(depth_value, "water depth")
     )
 
-    rotation_center = _vector3(
-        config["rotation_center_m"],
-        "rotation_center_m",
-    )
     center_of_mass = _vector3(
         config["center_of_mass_m"],
         "center_of_mass_m",
     )
-    if not np.allclose(rotation_center, center_of_mass):
-        raise ValueError(
-            "CG-referenced output requires rotation_center_m = "
-            "center_of_mass_m"
-        )
+    rotation_center = center_of_mass
 
     # ------------------------------------------------------------------
     # Finite frequencies
@@ -288,19 +281,7 @@ def run(config_path: Path) -> Path:
     # these 19 headings to the full 36-heading directional set.
     # ------------------------------------------------------------------
 
-    headings_deg = np.asarray(
-        config["wave_directions_deg"],
-        dtype=float,
-    )
-    expected_headings = np.arange(0.0, 181.0, 10.0)
-    if headings_deg.shape != expected_headings.shape or not np.allclose(
-        headings_deg,
-        expected_headings,
-    ):
-        raise ValueError(
-            "wave_directions_deg must be 0, 10, ..., 180 degrees"
-        )
-    headings_rad = np.deg2rad(headings_deg)
+    headings_rad = np.deg2rad(MSS_WAVE_DIRECTIONS_DEG)
 
     # ------------------------------------------------------------------
     # Capytaine body and hydrostatics
