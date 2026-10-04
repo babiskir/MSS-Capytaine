@@ -163,6 +163,7 @@ vessels_capytaine/
   testShip/config.json          Example configuration
   testShip/offset_points.csv
                                 Example hull offsets
+  testShip/README.md            Geometry and modeling assumptions
   testShip/results/             Generated hydrodynamic data
   LAUV_marie/config.json        Submerged LAUV Marie-inspired configuration
   LAUV_marie/offset_points.csv  Idealized closed-body offsets
