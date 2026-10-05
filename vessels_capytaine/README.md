@@ -18,6 +18,13 @@ python main.py LAUV_marie
 
 The default case is `testShip`.
 
+Each case stores the damping inputs expected by MSS
+`computeManeuveringModel` under `viscous_damping` in its configuration.
+Surface vessels use `kappa_126` and `delta_zeta_345`. Submerged vehicles use
+the four target time constants `T_1236` and the roll/pitch damping-ratio
+increments `delta_zeta_45`. The exporter writes the applicable pair to
+`vessel.powerBased`.
+
 Inspect the generated cases with MSS from MATLAB or GNU Octave:
 
 ```matlab

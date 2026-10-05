@@ -44,9 +44,8 @@ load(fullfile(results_dir, 'generated_hull_panels.mat'));
 
 %% Compute the MSS maneuvering model and vessel periods
 omega_p = 0.8;
-vessel = computeManeuveringModel(vessel, omega_p, ...
-    vessel.powerBased.kappa_126, ...    % Specified in config.json 
-    vessel.powerBased.delta_zeta_345);  % Specified in config.json 
+% Reuse kappa_126 and delta_zeta_345 exported from config.json.
+vessel = computeManeuveringModel(vessel, omega_p);
 
 % Natural frequencies and damping ratios for frequency-dependent matrices
 [T,zeta,omega,omega_n] = vesselPeriods(vessel.freqs, vessel.MRB, ...

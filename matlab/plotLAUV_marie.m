@@ -46,9 +46,8 @@ load(fullfile(results_dir, 'generated_hull_panels.mat'));
 
 %% Compute the MSS maneuvering model
 omega_p = 0.8;
-vessel = computeManeuveringModel(vessel, omega_p, ...
-    vessel.powerBased.kappa_126, ...    % Specified in config.json
-    vessel.powerBased.delta_zeta_345);  % Specified in config.json
+% Reuse T_1236 and delta_zeta_45 exported from config.json.
+vessel = computeManeuveringModel(vessel, omega_p);
 
 %% Display data
 display(vessel.M, 'M')

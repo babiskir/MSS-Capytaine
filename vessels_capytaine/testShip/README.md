@@ -75,6 +75,12 @@ radii of gyration are modeling inputs rather than measurements from a real
 ship. Their purpose is to produce a representative, approximately balanced
 demonstration case.
 
+The exporter also stores the center of flotation as `vessel.main.CF` in MSS
+FSD coordinates. It constructs the surface-vessel restoring matrix using
+`x_F = CF(1) - CG(1)`, including the heave-pitch coupling and its associated
+pitch-stiffness shift. For this fore-aft-symmetric test hull, `CF(1) = CG(1)`
+and `x_F = 0`.
+
 ## Frequencies, headings, and damping inputs
 
 The configured finite-frequency grid is nonuniform and extends from 0.01 to
@@ -86,17 +92,23 @@ Capytaine solves 19 wave propagation directions from 0 degrees to 180 degrees
 in 10-degree increments. The exporter mirrors these results to the full MSS
 36-heading grid from 0 degrees to 350 degrees.
 
-The configuration also stores the inputs used by the MSS power-based
+As a surface vessel, `testShip` uses relative damping increments for surge,
+sway, and yaw and damping-ratio increments for the restored heave, roll, and
+pitch modes. The configuration stores these inputs for the MSS power-based
 maneuvering model:
 
 ```json
-"kappa_126": [0.05, 0.05, 0.05],
-"delta_zeta_345": [0, 0.1, 0]
+"viscous_damping": {
+  "kappa_126": [0.05, 0.05, 0.05],
+  "delta_zeta_345": [0, 0.1, 0]
+}
 ```
 
-Python exports these values unchanged. MATLAB or GNU Octave applies them when
+Python exports these values unchanged as `vessel.powerBased.kappa_126` and
+`vessel.powerBased.delta_zeta_345`. MATLAB or GNU Octave applies them when
 `computeManeuveringModel` constructs the equivalent constant added-mass and
-damping matrices.
+damping matrices. Submerged vehicles use the separate `T_1236` and
+`delta_zeta_45` inputs described by the LAUV Marie case.
 
 ## Generate and inspect the case
 

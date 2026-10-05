@@ -16,12 +16,26 @@ RECIPROCITY_WARNING_THRESHOLD = 0.01
 RECIPROCITY_GLOBAL_WARNING_THRESHOLD = 1e-3
 
 
-def _viscous_damping_parameters(settings: object) -> tuple[np.ndarray, np.ndarray]:
+def _viscous_damping_parameters(
+    settings: object,
+    submerged: bool = False,
+) -> dict[str, np.ndarray]:
     """Validate damping inputs stored for the MATLAB power-based model."""
     if not isinstance(settings, dict):
         raise ValueError("viscous_damping must be an object")
 
-    expected = {"kappa_126", "delta_zeta_345"}
+    if submerged:
+        schema = {
+            "T_1236": (4, True),
+            "delta_zeta_45": (2, False),
+        }
+    else:
+        schema = {
+            "kappa_126": (3, False),
+            "delta_zeta_345": (3, False),
+        }
+
+    expected = set(schema)
     unknown = set(settings) - expected
     missing = expected - set(settings)
     if unknown:
@@ -33,18 +47,20 @@ def _viscous_damping_parameters(settings: object) -> tuple[np.ndarray, np.ndarra
             "Missing viscous_damping entries: " + ", ".join(sorted(missing))
         )
 
-    parameters = []
-    for name in ("kappa_126", "delta_zeta_345"):
+    parameters = {}
+    for name, (size, strictly_positive) in schema.items():
         values = np.asarray(settings[name], dtype=float)
-        if values.shape != (3,) or not np.all(np.isfinite(values)):
+        if values.shape != (size,) or not np.all(np.isfinite(values)):
             raise ValueError(
-                f"viscous_damping.{name} must contain three finite numbers"
+                f"viscous_damping.{name} must contain {size} finite numbers"
             )
-        if np.any(values < 0):
+        if strictly_positive and np.any(values <= 0):
+            raise ValueError(f"viscous_damping.{name} must be positive")
+        if not strictly_positive and np.any(values < 0):
             raise ValueError(f"viscous_damping.{name} must be nonnegative")
-        parameters.append(values)
+        parameters[name] = values
 
-    return parameters[0], parameters[1]
+    return parameters
 
 
 def _vector3(value: object, name: str) -> tuple[float, float, float]:
@@ -174,8 +190,9 @@ def run(config_path: Path) -> Path:
             "Rename total_damping to viscous_damping and review the values: "
             "the new settings specify additional damping, not total targets"
         )
-    kappa_126, delta_zeta_345 = _viscous_damping_parameters(
-        config.get("viscous_damping")
+    damping_parameters = _viscous_damping_parameters(
+        config.get("viscous_damping"),
+        submerged=submerged,
     )
     base = config_path.parent
 
@@ -379,6 +396,26 @@ def run(config_path: Path) -> Path:
             100.0 * relative_mass_error,
         )
 
+    if submerged:
+        x_f_mesh = 0.0
+        center_of_flotation_mss = None
+    else:
+        waterplane_area = float(immersed.waterplane_area)
+        if not np.isfinite(waterplane_area) or waterplane_area <= 0.0:
+            raise ValueError("The surface vessel has no positive waterplane area")
+        waterplane_x = immersed.mesh.quadrature_points[0][:, :, 0]
+        center_of_flotation_x = float(
+            immersed.mesh.waterplane_integral(waterplane_x)
+            / waterplane_area
+        )
+        # The mesh x axis points aft, whereas MSS x points forward.
+        x_f_mesh = center_of_flotation_x - center_of_mass[0]
+        center_of_flotation_mss = [
+            -center_of_flotation_x,
+            0.0,
+            0.0,
+        ]
+
     hydrostatic_stiffness = body.compute_hydrostatic_stiffness(
         rho=rho,
         g=gravity,
@@ -387,13 +424,35 @@ def run(config_path: Path) -> Path:
         hydrostatic_stiffness,
         dtype=float,
     ).copy()
-    # A freely floating body has no hydrostatic restoring force or moment
-    # in surge, sway, or yaw. A fully submerged body also has no waterplane
-    # heave stiffness. Remove mesh-integration residuals in those rows and
-    # columns before computing the motion RAOs.
-    free_dofs = (0, 1, 2, 5) if submerged else (0, 1, 5)
-    hydrostatic_matrix[list(free_dofs), :] = 0.0
-    hydrostatic_matrix[:, list(free_dofs)] = 0.0
+    if submerged:
+        # A freely submerged body has no restoring force or moment in surge,
+        # sway, heave, or yaw.
+        free_dofs = (0, 1, 2, 5)
+        hydrostatic_matrix[list(free_dofs), :] = 0.0
+        hydrostatic_matrix[:, list(free_dofs)] = 0.0
+
+        # For a freely submerged constant-volume vehicle, gravity and
+        # buoyancy provide independent roll and pitch restoring moments.
+        # Roll-pitch hydrostatic coupling is identically zero.
+        hydrostatic_matrix[3, 4] = 0.0
+        hydrostatic_matrix[4, 3] = 0.0
+    else:
+        # Implement Eq. (4.28) in MSS FSD conventions. Capytaine supplies
+        # the diagonal stiffness about CG in mesh axes. Remove its x_F shift
+        # from pitch, then explicitly apply the equivalent CF-to-CG screw
+        # transformation. The mesh-frame construction is converted to FSD
+        # later, where x_F = -x_f_mesh.
+        g33 = hydrostatic_matrix[2, 2]
+        g44_cf = hydrostatic_matrix[3, 3]
+        g55_cf = hydrostatic_matrix[4, 4] - g33 * x_f_mesh**2
+
+        hydrostatic_matrix.fill(0.0)
+        hydrostatic_matrix[2, 2] = g33
+        hydrostatic_matrix[2, 4] = -g33 * x_f_mesh
+        hydrostatic_matrix[3, 3] = g44_cf
+        hydrostatic_matrix[4, 2] = -g33 * x_f_mesh
+        hydrostatic_matrix[4, 4] = g55_cf + g33 * x_f_mesh**2
+
     body.hydrostatic_stiffness = body.add_dofs_labels_to_matrix(
         hydrostatic_matrix
     )
@@ -598,6 +657,8 @@ def run(config_path: Path) -> Path:
         "submerged": submerged,
         "submergence_depth_m": submergence_depth,
     }
+    if center_of_flotation_mss is not None:
+        hydrostatics["center_of_flotation_m"] = center_of_flotation_mss
 
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "hydrostatics.json").open(
@@ -621,9 +682,8 @@ def run(config_path: Path) -> Path:
         zero_radiation_damping=B0,
         infinite_added_mass=Ainf,
         infinite_radiation_damping=Binf,
-        kappa_126=kappa_126,
-        delta_zeta_345=delta_zeta_345,
         submerged=submerged,
+        **damping_parameters,
     )
 
     return output_dir

@@ -166,9 +166,11 @@ def write_vessel(
     zero_radiation_damping: np.ndarray,
     infinite_added_mass: np.ndarray,
     infinite_radiation_damping: np.ndarray,
-    kappa_126: np.ndarray,
-    delta_zeta_345: np.ndarray,
+    kappa_126: np.ndarray | None = None,
+    delta_zeta_345: np.ndarray | None = None,
     submerged: bool = False,
+    T_1236: np.ndarray | None = None,
+    delta_zeta_45: np.ndarray | None = None,
 ) -> None:
     """Write zero-speed Capytaine results as an MSS vessel structure.
 
@@ -187,7 +189,9 @@ def write_vessel(
     for a port-starboard symmetric monohull. These are mirrored to the full
     0 to 350 deg directional set in the MATLAB vessel structure.
 
-    The damping parameters are stored under vessel.powerBased. MATLAB's
+    The vessel-type-specific damping parameters are stored under
+    vessel.powerBased. Floating vessels use kappa_126 and delta_zeta_345;
+    submerged vehicles use T_1236 and delta_zeta_45. MATLAB's
     computeManeuveringModel uses them to form the single constant Bv matrix.
     Second-order drift forces are not included.
     """
@@ -269,6 +273,15 @@ def write_vessel(
         dtype=float,
     )
 
+    cf = (
+        None
+        if submerged
+        else np.asarray(
+            hydrostatics["center_of_flotation_m"],
+            dtype=float,
+        )
+    )
+
     # vertices are still expressed in the original Capytaine mesh axes.
     length = float(
         np.ptp(vertices[:, 0])
@@ -338,16 +351,18 @@ def write_vessel(
             mass_matrix[5, 5] / mass
         ),
 
-        "GM_T": (
-            stiffness[3, 3]
-            / (mass * gravity)
-        ),
+        "GM_T": stiffness[3, 3] / (rho * gravity * volume),
 
         "GM_L": (
             stiffness[4, 4]
-            / (mass * gravity)
-        ),
+            if submerged
+            else stiffness[4, 4]
+            - stiffness[2, 2] * (cf[0] - cg[0])**2
+        ) / (rho * gravity * volume),
     }
+
+    if not submerged:
+        main["CF"] = cf
 
     # ------------------------------------------------------------------
     # Added mass
@@ -450,18 +465,40 @@ def write_vessel(
         axis=2,
     )
 
-    kappa_126 = np.asarray(kappa_126, dtype=float)
-    delta_zeta_345 = np.asarray(delta_zeta_345, dtype=float)
-    for values, name in (
-        (kappa_126, "kappa_126"),
-        (delta_zeta_345, "delta_zeta_345"),
-    ):
+    if submerged:
+        if kappa_126 is not None or delta_zeta_345 is not None:
+            raise ValueError(
+                "Submerged vehicles use T_1236 and delta_zeta_45"
+            )
+        damping_parameters = {
+            "T_1236": (T_1236, 4, True),
+            "delta_zeta_45": (delta_zeta_45, 2, False),
+        }
+    else:
+        if T_1236 is not None or delta_zeta_45 is not None:
+            raise ValueError(
+                "Floating vessels use kappa_126 and delta_zeta_345"
+            )
+        damping_parameters = {
+            "kappa_126": (kappa_126, 3, False),
+            "delta_zeta_345": (delta_zeta_345, 3, False),
+        }
+
+    power_based = {}
+    for name, (raw_values, size, strictly_positive) in damping_parameters.items():
+        if raw_values is None:
+            raise ValueError(f"{name} is required")
+        values = np.asarray(raw_values, dtype=float)
         if (
-            values.shape != (3,)
+            values.shape != (size,)
             or not np.all(np.isfinite(values))
-            or np.any(values < 0)
         ):
-            raise ValueError(f"{name} must contain three nonnegative numbers")
+            raise ValueError(f"{name} must contain {size} finite numbers")
+        if strictly_positive and np.any(values <= 0):
+            raise ValueError(f"{name} must be positive")
+        if not strictly_positive and np.any(values < 0):
+            raise ValueError(f"{name} must be nonnegative")
+        power_based[name] = values
 
     # ------------------------------------------------------------------
     # Force RAOs
@@ -558,10 +595,7 @@ def write_vessel(
             "power-based constant diagonal Bv computed in MATLAB"
         ),
 
-        "powerBased": {
-            "kappa_126": kappa_126,
-            "delta_zeta_345": delta_zeta_345,
-        },
+        "powerBased": power_based,
 
         "second_order_drift": (
             "not computed"
