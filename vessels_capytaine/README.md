@@ -30,13 +30,21 @@ Inspect the generated cases with MSS from MATLAB or GNU Octave:
 ```matlab
 addpath(genpath('/path/to/MSS'))
 addpath('/path/to/MSS-Capytaine/matlab')
-plotTestShip
-plotLAUV_marie
+
+% Surface-vessel example
+plotVesselMesh('testShip')
+plotVesselHydrodynamics('testShip');
+
+% Submerged-vessel example
+plotVesselMesh('LAUV_marie')
+plotVesselHydrodynamics('LAUV_marie');
 ```
 
-The two plotting functions load their case data, compute the MSS maneuvering
-model, draw the hull-panel mesh in separate case-specific figures, and plot
-the hydrodynamic coefficients and force RAOs.
+The two plotting functions are independent of the catalogue vessel. Their
+input is the catalogue folder name, and they locate and load the generated
+`.mat` files automatically. `plotVesselHydrodynamics` computes the MSS
+maneuvering model and plots the hydrodynamic coefficients, force RAOs, and
+viscous damping.
 
 To refresh the pre-generated MSS catalogue after a solve, copy the resulting
 `.mat` file to the matching directory under

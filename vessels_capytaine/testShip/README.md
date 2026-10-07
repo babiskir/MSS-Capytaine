@@ -132,19 +132,14 @@ python plot_results.py vessels_capytaine/testShip/results/testShip.mat
 python plot_results.py vessels_capytaine/testShip/results/testShip.mat --heading 90
 ```
 
-With MSS on the MATLAB or GNU Octave path, load, process, and plot the case
-using the supplied function:
+With MSS on the MATLAB or GNU Octave path, load the generated vessel and use
+the vessel-independent functions to inspect its mesh and hydrodynamic data:
 
 ```matlab
 addpath(genpath('/path/to/MSS'))
 addpath('/path/to/MSS-Capytaine/matlab')
-plotTestShip
-```
-
-The processed MSS vessel structure can also be returned to the workspace:
-
-```matlab
-vessel = plotTestShip();
+plotVesselMesh('testShip')
+plotVesselHydrodynamics('testShip');
 ```
 
 The result files contain the rigid-body mass matrix, hydrostatic restoring,

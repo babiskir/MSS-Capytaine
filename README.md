@@ -1,5 +1,7 @@
 # MSS-Capytaine
 
+**Version 1.0 (2026)**
+
 MSS-Capytaine is a Python add-on for the [Marine Systems Simulator (MSS)](https://github.com/cybergalactic/MSS). It uses the open-source [Capytaine](https://capytaine.org/) boundary-element solver to compute 6-DOF linear potential-flow hydrodynamics and exports the results as the standard MATLAB/Octave `vessel` structure used by MSS.
 
 The project provides an open-source hydrodynamic-data workflow for MSS users without access to the commercial ShipX or WAMIT solvers. Capytaine performs the boundary-element calculations; MSS provides the MATLAB and GNU Octave functions for analysis, model reduction, plotting, and time-domain simulation. 
@@ -8,29 +10,87 @@ The repository includes a synthetic surface monohull and an idealized submerged 
 
 Author: Thor I. Fossen
 
-Date: 2026-09-23
+## Recommended citation
+
+If you use MSS-Capytaine in your work, please cite the software as:
+
+> Fossen, Thor I. (2026). *MSS-Capytaine* (Version 1.0) [Computer software]. GitHub. https://github.com/cybergalactic/MSS-Capytaine
+
+BibTeX:
+
+```bibtex
+@software{Fossen2026_MSScapytaine,
+  author  = {Fossen, Thor I.},
+  title   = {MSS-Capytaine},
+  version = {1.0},
+  year    = {2026},
+  url     = {https://github.com/cybergalactic/MSS-Capytaine}
+}
+```
 
 ## MSS Toolbox Integration
 
-The integration keeps the Python solver and MSS loosely coupled through a MATLAB data file:
+The version 1.0 workflow uses a named vessel folder containing an offset CSV file for the hull geometry and a JSON file for the vessel particulars and calculation settings. The folder name is also the vessel name used in the Python command. For example, a vessel named `myVessel` must have this catalogue structure:
 
 ```text
-config.json (offset points)
-            |
-            v
-   MSS-Capytaine mesh generation
-            |
-            v
-     Capytaine BEM solution
-            |
-            v
-Coordinate conversion and MSS export
-            |
-            v
- <vessel_name>.mat (`vessel`)
-            |
-            v
- MSS HYDRO functions and MAIN LOOP vessel simulator
+vessels_capytaine/
+  myVessel/
+    config.json
+    offset_points.csv
+```
+
+1. **Create the vessel catalogue and offset CSV with AI assistance.** Under `vessels_capytaine/`, create a folder named after the vessel, for example `vessels_capytaine/myVessel/`. Use a simple folder name without spaces because the same name will be entered on the command line. Copy the existing [`offset_points.csv`](vessels_capytaine/testShip/offset_points.csv) into the new folder and use it as the required template. Upload the template together with the vessel datasheet, drawings, and relevant photographs to an AI assistant such as ChatGPT, and ask it to produce the new CSV with the same columns and coordinate convention. Save the result as `offset_points.csv`. AI-generated geometry is a starting point and must be checked by the user.
+2. **Enter the vessel particulars in JSON.** Copy the existing [`config.json`](vessels_capytaine/testShip/config.json) into the same folder. Set `body_name` to `myVessel`, `output_filename` to `myVessel.mat`, `offset_points_csv` to `offset_points.csv`, and `output_dir` to `results`. Update the principal dimensions, mass properties, center of mass, mesh resolution, frequency range, and damping inputs, then save the file as `config.json`.
+3. **Run MSS-Capytaine.** From the repository root, type `python main.py myVessel`. This single command automatically generates the mesh, runs the Capytaine BEM calculations, converts the results to MSS coordinates, and exports the MSS `vessel` structure.
+4. **Inspect the generated mesh.** In MATLAB or GNU Octave, add MSS and the MSS-Capytaine MATLAB folder to the path, then call `plotVesselMesh('myVessel')`. The function finds and loads the generated `.mat` and mesh files automatically.
+
+   ```matlab
+   addpath(genpath('/path/to/MSS'))
+   addpath('/path/to/MSS-Capytaine/matlab')
+   plotVesselMesh('myVessel')
+   ```
+
+   Check the hull shape, waterline, station spacing, panel resolution, and any Capytaine warnings. If the mesh is satisfactory, continue to item 5. If it is not satisfactory, return to item 1, revise the offset CSV or source information, and run the calculation again.
+5. **Inspect the hydrodynamic results.** Use the same catalogue name to plot the force RAOs, added mass, radiation damping, and viscous damping. This function also finds and loads the generated vessel file automatically:
+
+   ```matlab
+   plotVesselHydrodynamics('myVessel');
+   ```
+
+6. **Copy the MSS vessel file.** Copy the generated `vessels_capytaine/myVessel/results/myVessel.mat` file to a matching vessel directory under `MSS/HYDRO/vessels_capytaine/`.
+7. **Simulate the vessel in MSS.** In MATLAB or GNU Octave, run [`SIMhydroVessel.m`](https://github.com/cybergalactic/MSS/blob/master/CRAFT/SIMhydroVessel.m) to use the 6-DOF model with waves and visualize the simulation.
+
+The data flow is:
+
+```text
+Datasheets + drawings + photographs + CSV template
+                         |
+                         v
+        vessels_capytaine/myVessel/
+          |-- offset_points.csv
+          `-- config.json
+                         |
+                         v
+             python main.py myVessel
+                         |
+                         v
+          plotVesselMesh('myVessel')
+                         |
+                  Is the mesh OK?
+                    /          \
+                  no            yes
+                  |              |
+                  v              v
+       Return to item 1    plotVesselHydrodynamics('myVessel')
+                                 |
+                                 v
+                    Copy results/myVessel.mat to MSS
+                         |
+                         v
+          Run SIMhydroVessel.m in MSS
+                         |
+                         v
+        6-DOF simulation with waves
 ```
 
 MSS-Capytaine converts the Capytaine results to the MSS conventions before export:
@@ -113,28 +173,25 @@ python main.py LAUV_marie
 
 This writes `vessels_capytaine/LAUV_marie/results/LAUV_marie.mat`. The case uses NTNU's published 2.15 m length and 34 kg mass for Marie, the published 0.15 m OceanScan LAUV-family diameter, and a documented idealized tapered-cylinder hull. Its finite-frequency grid extends to 9.5 rad/s; 10 rad/s remains the plotting location for the separately computed infinite-frequency result.
 
-To inspect either result using MSS, add MSS and the MSS-Capytaine MATLAB directory to the MATLAB or GNU Octave path, then call the corresponding plotting function:
+To inspect either result using MSS, add MSS and the MSS-Capytaine MATLAB directory to the MATLAB or GNU Octave path, then pass the catalogue name to the two vessel-independent plotting functions. Each function locates and loads the generated vessel data automatically.
+
+For `testShip`:
 
 ```matlab
 addpath(genpath('/path/to/MSS'))
-addpath('matlab')
-plotTestShip
-plotLAUV_marie
+addpath('/path/to/MSS-Capytaine/matlab')
+plotVesselMesh('testShip')
+plotVesselHydrodynamics('testShip');
 ```
 
-Both MATLAB functions:
-
-1. Load the generated `vessel` structure and hull panels;
-2. Call `computeManeuveringModel` to form an equivalent zero-speed model;
-3. Draw the hull-panel mesh in a case-specific figure; and
-4. Use `plotTF`, `plotABC`, and `plotBv` to inspect the MSS hydrodynamic data.
-
-`plotTestShip` also calls `vesselPeriods` to calculate the surface vessel’s heave, roll, and pitch periods and damping ratios. `plotLAUV_marie` omits that step because the fully submerged vehicle has no hydrostatic heave stiffness. Both functions return the processed `vessel` structure when called with an output argument:
+For `LAUV_marie`:
 
 ```matlab
-test_ship = plotTestShip();
-lauv_marie = plotLAUV_marie();
+plotVesselMesh('LAUV_marie')
+plotVesselHydrodynamics('LAUV_marie');
 ```
+
+`plotVesselMesh` loads `myVessel.mat` and the matching generated panel file from the named catalogue folder. `plotVesselHydrodynamics` loads the same vessel structure, calls `computeManeuveringModel` using the damping inputs exported from `config.json`, then uses `plotTF`, `plotABC`, and `plotBv` to inspect the MSS hydrodynamic data. It also calls `vesselPeriods` for surface vessels; fully submerged vehicles have no hydrostatic heave stiffness, so that calculation is skipped automatically.
 
 ## Repository layout
 
@@ -151,8 +208,9 @@ vessels_capytaine/
   LAUV_marie/config.json        Submerged LAUV Marie-inspired configuration
   LAUV_marie/offset_points.csv  Idealized closed-body offsets
   LAUV_marie/README.md          Sources and modeling assumptions
-matlab/plotTestShip.m           testShip MSS integration and plotting function
-matlab/plotLAUV_marie.m         LAUV Marie MSS integration and plotting function
+matlab/plotVesselMesh.m         Plot the generated mesh for any catalogue vessel
+matlab/plotVesselHydrodynamics.m
+                                Plot MSS hydrodynamic data for any vessel
 ```
 
 ## Plot in Python

@@ -68,13 +68,15 @@ Select another wave heading, for example 90 degrees, with:
 The figures are saved in
 vessels_capytaine/LAUV_marie/results/plots/.
 
-With MSS on the MATLAB or GNU Octave path, inspect the generated vessel and
-hull-panel mesh using the repository's MATLAB plotting function:
+With MSS on the MATLAB or GNU Octave path, load the generated vessel and use
+the vessel-independent functions to inspect its mesh and hydrodynamic data:
 
-    addpath('/path/to/MSS-Capytaine/matlab')
-    plotLAUV_marie
+```matlab
+addpath(genpath('/path/to/MSS'))
+addpath('/path/to/MSS-Capytaine/matlab')
+plotVesselMesh('LAUV_marie')
+plotVesselHydrodynamics('LAUV_marie');
+```
 
-The function returns the processed MSS vessel structure when called with an
-output argument:
-
-    vessel = plotLAUV_marie();
+The hydrodynamic plotting function detects that LAUV Marie is submerged and
+therefore skips the surface-vessel heave-period calculation automatically.
